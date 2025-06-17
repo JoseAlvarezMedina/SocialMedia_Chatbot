@@ -1,0 +1,11 @@
+[theme]
+base="dark"
+primaryColor="#4B8BBE"
+backgroundColor="#0E1117"
+secondaryBackgroundColor="#262730"
+textColor="#FAFAFA"
+font="Georgia"
+
+[server]
+enableCORS = false
+enableWebsocketCompression = false
