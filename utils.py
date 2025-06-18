@@ -1,192 +1,193 @@
-# utils.py
+"""
+utils.py
 
+Funciones auxiliares para:
+  1) Configuración de LLM y selección de modelo.
+  2) Configuración de embeddings.
+  3) Gestión de historial de chat y UI helpers.
+  4) Carga de usuario y perfil desde JSON.
+
+No modifica la lógica principal de la aplicación, solo ofrece utilidades reutilizables.
+"""
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Imports
+# ───────────────────────────────────────────────────────────────────────────────
 import os
-import openai
 import json
 import streamlit as st
 from datetime import datetime
 from streamlit.logger import get_logger
+
 from langchain_openai import ChatOpenAI
-from langchain_community.chat_models import ChatOllama
-from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
+from langchain.embeddings import OpenAIEmbeddings
 
 logger = get_logger('Langchain-Chatbot')
 
+
+# ───────────────────────────────────────────────────────────────────────────────
+# 1) Lectura de API Key y configuración del LLM
+# ───────────────────────────────────────────────────────────────────────────────
+def get_openai_api_key() -> str:
+    """
+    Lee la OpenAI API Key desde .streamlit/secrets.toml.
+    Si no existe, muestra un error y detiene la app.
+    """
+    try:
+        return st.secrets["openai"]["api_key"]
+    except KeyError:
+        st.error("🔑 No se encontró la OpenAI API Key en .streamlit/secrets.toml")
+        st.stop()
+
+
+def choose_model(default: str = "gpt-3.5-turbo") -> str:
+    """
+    Muestra un selectbox en la sidebar para elegir el modelo LLM,
+    limitando a opciones de coste moderado.
+    """
+    models = ["gpt-3.5-turbo", "gpt-3.5-turbo-16k", "gpt-4o-mini"]
+    # Garantiza que el default esté al inicio
+    if default not in models:
+        models.insert(0, default)
+    idx = models.index(default)
+    return st.sidebar.selectbox("Modelo LLM", models, index=idx)
+
+
+def configure_llm() -> ChatOpenAI:
+    """
+    Crea y devuelve un cliente ChatOpenAI configurado para streaming,
+    usando la API Key y el modelo seleccionado en choose_model().
+    """
+    api_key = get_openai_api_key()
+    model_name = choose_model()
+    return ChatOpenAI(
+        model_name=model_name,
+        temperature=0,
+        streaming=True,
+        openai_api_key=api_key
+    )
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# 2) Configuración de embeddings
+# ───────────────────────────────────────────────────────────────────────────────
+@st.cache_resource
+def configure_embedding_model() -> OpenAIEmbeddings:
+    """
+    Instancia OpenAIEmbeddings cached para evitar recargas repetidas.
+    """
+    api_key = get_openai_api_key()
+    return OpenAIEmbeddings(openai_api_key=api_key)
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# 3) Historial de chat y helpers de UI
+# ───────────────────────────────────────────────────────────────────────────────
 def enable_chat_history(func):
     """
     Decorator que:
-      1) Inyecta CSS personalizado (burbujas y botones) una vez.
-      2) Limpia historial al cambiar de página.
-      3) Inserta saludo dinámico si no hay mensajes.
-      4) Renderiza TODO el historial antes de ejecutar la página.
+      1) Inyecta CSS global para el chat (una sola vez).
+      2) Resetea el historial al cambiar de página.
+      3) Inserta un saludo inicial basado en el perfil.
+      4) Llama a la función decorada.
     """
     def wrapper(*args, **kwargs):
-        # 1) CSS global (solo la primera vez)
+        # 1) Inyectar CSS si es la primera carga
         if "css_injected" not in st.session_state:
             st.markdown("""
                 <style>
-                  /* Burbujas de chat full-width */
-                  [data-testid="stChatMessage"] {
-                    width: 100% !important;
-                    max-width: none !important;
-                  }
-                  /* Botones full-width con colores de marca */
+                  [data-testid="stChatMessage"] { width:100% !important; }
                   div.stButton > button {
-                    width: 100% !important;
-                    background-color: #c29a7c !important;  /* secondary */
-                    color: #321a2a !important;              /* accent */
-                    border: none !important;
+                    width:100% !important;
+                    background-color:#c29a7c !important;
+                    color:#321a2a !important;
+                    border:none !important;
                   }
                 </style>
             """, unsafe_allow_html=True)
             st.session_state.css_injected = True
 
-        # 2) Reset si cambio de página
-        current = func.__qualname__
-        if "current_page" not in st.session_state:
-            st.session_state.current_page = current
-        elif st.session_state.current_page != current:
-            st.cache_resource.clear()
+        # 2) Reset historial al navegar entre páginas
+        current = func.__name__
+        if st.session_state.get("current_page") != current:
             st.session_state.current_page = current
             st.session_state.messages = []
 
-        # 3) Saludo dinámico si está vacío
-        if not st.session_state.messages:
+        # 3) Saludo inicial si no hay mensajes
+        if not st.session_state.get("messages"):
             profile = load_user_profile()
-            audience = profile.get("publicoObjetivo", "tu público objetivo")
-            intro = (
-                f"¡Hola! ¿En qué puedo ayudarte hoy? "
-                f"Te ofrezco estrategias digitales para {audience}."
-            )
-            st.session_state.messages = [{"role": "assistant", "content": intro}]
+            audiencia = profile.get("publicoObjetivo", "tu público objetivo")
+            saludo = f"¡Hola! Soy tu asistente de marketing digital para {audiencia}."
+            st.session_state.messages = [{"role": "assistant", "content": saludo}]
 
-        # 4) Renderizar historial completo
-        for msg in st.session_state.messages:
-            st.chat_message(msg["role"]).write(msg["content"])
-
-        # Ejecutar la página decorada
+        # 4) Ejecutar función original
         return func(*args, **kwargs)
 
     return wrapper
 
-def display_msg(msg, author):
+
+def display_msg(msg: str, author: str):
     """
-    Añade un mensaje al historial, lo muestra y hace scroll al final.
+    Agrega un mensaje a session_state y lo muestra con st.chat_message(),
+    luego hace scroll al final.
     """
     st.session_state.messages.append({"role": author, "content": msg})
     st.chat_message(author).write(msg)
     st.markdown(
         '<div id="end"></div>'
-        '<script>document.getElementById("end").scrollIntoView({behavior:"smooth"});</script>',
+        '<script>document.getElementById("end")'
+        '.scrollIntoView({behavior:"smooth"});</script>',
         unsafe_allow_html=True
     )
 
-def message_func(content: str, is_user: bool = False, is_df: bool = False, model: str = ""):
-    """
-    Renderiza un mensaje tipo burbuja con colores de marca:
-    - Usuario → derecha con primary (#947158)
-    - Asistente → izquierda con accent (#321a2a)
-    Texto en neutral (#F3F4F6)
-    """
-    align = "right" if is_user else "left"
-    bg = "#947158" if is_user else "#321a2a"
-    color = "#F3F4F6"
-    st.markdown(
-        f"""
-        <div style="
-          text-align: {align};
-          background-color: {bg};
-          color: {color};
-          border-radius: 10px;
-          padding: 8px 12px;
-          margin: 4px 0;
-          display: inline-block;
-          max-width: 80%;
-          font-size: 14px;
-        ">
-          {content}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
 
-class StreamlitUICallbackHandler:
+def message_func(content: str, is_user: bool = False):
     """
-    Handler de ejemplo para streaming callbacks.
+    Muestra un único mensaje con st.chat_message(), sin duplicar el historial.
     """
-    def __init__(self):
-        pass
+    role = "user" if is_user else "assistant"
+    st.chat_message(role).write(content)
 
-def choose_custom_openai_key():
-    openai_api_key = st.sidebar.text_input(
-        label="OpenAI API Key",
-        type="password",
-        placeholder="sk-...",
-        key="SELECTED_OPENAI_API_KEY"
-    )
-    if not openai_api_key:
-        st.error("Please add your OpenAI API key to continue.")
-        st.info("Obtain your key from: https://platform.openai.com/account/api-keys")
-        st.stop()
-    model = "gpt-4o-mini"
-    try:
-        client = openai.OpenAI(api_key=openai_api_key)
-        available = [
-            {"id": m.id, "created": datetime.fromtimestamp(m.created)}
-            for m in client.models.list() if str(m.id).startswith("gpt")
-        ]
-        available = sorted(available, key=lambda x: x["created"])
-        models = [m["id"] for m in available]
-        model = st.sidebar.selectbox("Model", options=models, key="SELECTED_OPENAI_MODEL")
-    except Exception as e:
-        st.error(str(e))
-        st.stop()
-    return model, openai_api_key
-
-def configure_llm():
-    return ChatOpenAI(
-        model_name="gpt-4o-mini",
-        temperature=0,
-        streaming=True,
-        api_key=st.secrets["OPENAI_API_KEY"]
-    )
-
-@st.cache_resource
-def configure_embedding_model():
-    return FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
 
 def sync_st_session():
-    for k, v in st.session_state.items():
-        st.session_state[k] = v
-
-def get_current_user():
     """
-    Extrae el email del último registro en data/surveys.json.
+    No-op: mantenido para compatibilidad, evita reasignar session_state.
+    """
+    pass
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# 4) Carga de usuario y perfil desde JSON
+# ───────────────────────────────────────────────────────────────────────────────
+def get_current_user() -> str:
+    """
+    Retorna el campo 'user' de la última entrada en data/surveys.json,
+    o cadena vacía si no existe.
     """
     base = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(base, "data", "surveys.json")
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            surveys = json.load(f)
-    except:
+        surveys = json.load(open(path, "r", encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
         return ""
-    return surveys[-1].get("user", "") if surveys else ""
+    if not isinstance(surveys, list) or not surveys:
+        return ""
+    return surveys[-1].get("user", "")
 
-def load_user_profile():
+
+def load_user_profile() -> dict:
     """
-    Lee la última encuesta de data/surveys.json (sin la clave 'user').
+    Devuelve la última encuesta de data/surveys.json (sin la clave 'user'),
+    o un diccionario vacío si no existe.
     """
-    user = get_current_user()
-    if not user:
-        return {}
     base = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(base, "data", "surveys.json")
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            surveys = json.load(f)
-    except:
+        surveys = json.load(open(path, "r", encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
         return {}
-    for entry in reversed(surveys):
-        if entry.get("user") == user:
-            return {k: v for k, v in entry.items() if k != "user"}
-    return {}
+    if not isinstance(surveys, list) or not surveys:
+        return {}
+    last = surveys[-1].copy()
+    last.pop("user", None)
+    return last

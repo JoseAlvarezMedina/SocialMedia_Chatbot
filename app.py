@@ -1,315 +1,228 @@
-# app.py
+"""
+app.py
 
+Interfaz principal de Streamlit para EstrategIA MKT:
+- Configura la página y carga estilos.
+- Gestiona la UI de chat con RAG, carga de PDF/CSV y generación rápida de contenido.
+"""
+
+# ───────────────────────────────────────────────────────────────────────────────
+# 1) Imports
+# ───────────────────────────────────────────────────────────────────────────────
+# Librerías estándar
 import os
-import tempfile
-import sqlite3
+import json
 
-import pandas as pd
+# Librerías de terceros
 import streamlit as st
-from sqlalchemy import create_engine
-
-from langchain_community.chat_models import ChatOpenAI
-from langchain.chains import ConversationChain, RetrievalQA
-from langchain.memory import ConversationBufferMemory
-from langchain.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import OpenAIEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_community.agent_toolkits import create_sql_agent
-from langchain_community.callbacks import StreamlitCallbackHandler
-from langchain_community.utilities.sql_database import SQLDatabase
-
+import PyPDF2
+import pandas as pd
+from openai import OpenAI
+from langchain.chains import LLMChain
 from langchain.prompts import (
     ChatPromptTemplate,
     SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-    MessagesPlaceholder
+    HumanMessagePromptTemplate
 )
 
-from utils import get_current_user, load_user_profile, message_func
+# Módulos propios
+from callbacks import StreamHandler
+from utils import (
+    enable_chat_history,
+    display_msg,
+    configure_llm,
+    configure_embedding_model,
+    get_openai_api_key,
+    load_user_profile
+)
+from vectorstore import initialize_vectorstore
 
-# --- 1) Page config & hide menu/header ---
-st.set_page_config(page_title="Tu colaborador de marketing", page_icon="🤖")
-st.markdown("""
-    <style>
-      #MainMenu {visibility: hidden;}
-      header {visibility: hidden;}
-    </style>
-""", unsafe_allow_html=True)
 
-# --- 2) Global CSS for palette, backgrounds & components ---
-st.markdown("""
-<style>
-  /* App background white */
-  [data-testid="stAppViewContainer"] {
-    background-color: #FFFFFF !important;
-  }
-  /* Sidebar light neutral */
-  [data-testid="stSidebar"] {
-    background-color: #c29a7c !important;
-  }
-  /* Buttons primary */
-  div.stButton > button {
-    background-color: #947158 !important;
-    color: #FFFFFF !important;
-    border: none !important;
-    border-radius: 0.25rem !important;
-  }
-  /* Radio buttons labels */
-  .stRadio label, .stRadio div {
-    color: #321a2a !important;
-  }
-  /* Hide default chat bubbles */
-  [data-testid="stChatMessage"] {
-    display: none !important;
-  }
-  /* File uploader container */
-  .stFileUploader > div {
-    background-color: #F3F4F6 !important;
-    border: 1px dashed #c29a7c !important;
-    color: #321a2a !important;
-  }
-  .stFileUploader label, .stFileUploader .uploading-text {
-    color: #321a2a !important;
-  }
-  /* Text input */
-  input[type="text"], textarea {
-    background-color: #FFFFFF !important;
-    color: #321a2a !important;
-  }
-  /* Chat input box */
-  .stForm input {
-    background-color: #FFFFFF !important;
-    color: #321a2a !important;
-  }
-</style>
-""", unsafe_allow_html=True)
+# ───────────────────────────────────────────────────────────────────────────────
+# 2) Configuración de página y estilos
+# ───────────────────────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="EstrategIA MKT",
+    page_icon="🤖",
+    layout="wide",
+)
 
-# --- 3) Header with logo and friendly title ---
-logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
-col_logo, col_title = st.columns([1, 4], gap="small")
-with col_logo:
-    if os.path.exists(logo_path):
-        st.image(logo_path, width=140)
-with col_title:
-    st.markdown("<h1 style='margin:0; line-height:80px; color:#947158;'>Robotitus</h1>", unsafe_allow_html=True)
+def load_css(path: str):
+    """
+    Carga un fichero CSS y lo inyecta en la app Streamlit.
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        css = f.read()
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
-# --- 4) Avatar ---
-user = get_current_user()
-if user:
-    initial = user[0].upper()
-    st.markdown(f"""
-        <style>
-          .avatar {{
-            position: absolute; top: 1rem; right: 1rem;
-            width: 2.5rem; height: 2.5rem;
-            background: #c29a7c; color: #321a2a;
-            border-radius: 50%; display: flex;
-            align-items: center; justify-content: center;
-            font-weight: bold; cursor: pointer; z-index:100;
-          }}
-        </style>
-        <div class="avatar" onclick="window.location.reload()">{initial}</div>
-    """, unsafe_allow_html=True)
 
-# --- 5) Session state init ---
-if "memory" not in st.session_state:
-    st.session_state.memory = ConversationBufferMemory(memory_key="history", return_messages=True)
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "greeted" not in st.session_state:
-    st.session_state.greeted = False
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_css(os.path.join(BASE_DIR, "assets", "style.css"))
 
-# --- 6) Initial greeting ---
-profile = load_user_profile()
-if not st.session_state.greeted:
-    audience = profile.get("publicoObjetivo", "tu público objetivo")
-    intro = (
-        f"¡Hola! ¿En qué puedo ayudarte hoy? "
-        f"Estrategias de marketing digital para {audience}."
+
+# ───────────────────────────────────────────────────────────────────────────────
+# 3) Función principal
+# ───────────────────────────────────────────────────────────────────────────────
+@enable_chat_history
+def main():
+    """
+    Renderiza la aplicación, maneja el flujo de chat, 
+    la generación rápida de contenido y la lógica RAG/PDF/CSV.
+    """
+    # 3.1) Header con logo y título
+    st.markdown("## 🤖 EstrategIA MKT")
+
+    # 3.2) Configurar LLM, embeddings y cliente OpenAI
+    llm      = configure_llm()
+    embedder = configure_embedding_model()
+    client   = OpenAI(api_key=get_openai_api_key())
+
+    # 3.3) Cargar perfil de usuario
+    profile = load_user_profile()
+
+    # 3.4) Definir prompt templates y LLMChains para generación rápida
+    script_sys = SystemMessagePromptTemplate.from_template(
+        "Eres un guionista experto en marketing digital para PYMEs.\n"
+        "Estructura del guion de video:\n"
+        "1. Intro/Hook\n"
+        "2. Problema\n"
+        "3. Pasos con ejemplos\n"
+        "4. Conclusión y CTA\n"
+        "Perfil: {nombreNegocio}, producto estrella: {productoEstrella}, público: {publicoObjetivo}."
     )
-    st.session_state.messages.append({"role": "assistant", "content": intro})
-    st.session_state.greeted = True
-
-# --- 7) Render chat history ---
-for msg in st.session_state.messages:
-    is_user = (msg["role"] == "user")
-    bg = "#c29a7c" if is_user else "#947158"
-    color = "#321a2a" if is_user else "#FFFFFF"
-    align = "right" if is_user else "left"
-    st.markdown(f"""
-        <div style="
-          text-align: {align};
-          background-color: {bg};
-          color: {color};
-          border-radius: 10px;
-          padding: 8px 12px;
-          margin: 4px 0;
-          display: inline-block;
-          max-width: 80%;
-          font-size: 14px;
-        ">
-          {msg["content"]}
-        </div>
-    """, unsafe_allow_html=True)
-
-# --- 8) Sidebar: Perfil ---
-if "show_profile" not in st.session_state:
-    st.session_state.show_profile = False
-if st.sidebar.button("Perfil"):
-    st.session_state.show_profile = not st.session_state.show_profile
-if st.session_state.show_profile:
-    st.sidebar.markdown("### 🔍 Tu perfil")
-    labels = {
-        "nombreNegocio":"Negocio", "tipoProducto":"Productos/Servicios",
-        "productoEstrella":"Producto estrella","personalidad":"Personalidad",
-        "identidadVisual":"Identidad visual","tipoContenidoMarca":"Tipo contenido",
-        "publicoObjetivo":"Público objetivo","redMasVentas":"Red principal",
-        "metodoVenta":"Método de venta","formatoContenido":"Formato contenido",
-        "frecuenciaPublicacion":"Frecuencia","contenidoPromocional":"Promocional",
-        "retoVentas":"Reto ventas","objetivoIAgora":"Objetivo IAgora",
-        "objetivoConcreto":"Objetivo concreto"
-    }
-    for k, v in profile.items():
-        st.sidebar.write(f"**{labels.get(k,k)}:** {v}")
-
-# --- 9) Sidebar: PDF loader ---
-st.sidebar.markdown("### 📄 Carga un PDF (opcional)")
-uploaded_pdf = st.sidebar.file_uploader("", type=["pdf"])
-document_chain = None
-if uploaded_pdf:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        tmp.write(uploaded_pdf.read())
-        pdf_path = tmp.name
-    docs = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200).split_documents(
-        PyPDFLoader(pdf_path).load()
+    calendar_sys = SystemMessagePromptTemplate.from_template(
+        "Eres un planificador de contenido para PYMEs.\n"
+        "Calendario de 7 días con:\n"
+        "- Fecha (YYYY-MM-DD)\n- Plataforma\n- Tipo de contenido\n- CTA\n- Hora\n"
+        "Perfil: {nombreNegocio}, contenido: {tipoContenidoMarca}, frecuencia: {frecuenciaPublicacion}."
     )
-    vs = FAISS.from_documents(docs, OpenAIEmbeddings(api_key=st.secrets["OPENAI_API_KEY"]))
-    document_chain = RetrievalQA.from_chain_type(
-        llm=ChatOpenAI(temperature=0, streaming=True, api_key=st.secrets["OPENAI_API_KEY"]),
-        chain_type="stuff", retriever=vs.as_retriever()
+    ideas_sys = SystemMessagePromptTemplate.from_template(
+        "Eres un creativo digital para PYMEs.\n"
+        "Sugiere 5 ideas de publicaciones:\n"
+        "- How-to\n- Listas\n- Preguntas abiertas\n- UGC\n- Citas motivacionales\n"
+        "Perfil: {nombreNegocio}, público: {publicoObjetivo}."
     )
+    human = HumanMessagePromptTemplate.from_template("{input}")
 
-# --- 10) Sidebar: CSV & SQL Agent ---
-st.sidebar.markdown("### 📊 Análisis CSV (opcional)")
-uploaded_csv = st.sidebar.file_uploader("", type=["csv"])
-if uploaded_csv:
-    df_csv = pd.read_csv(uploaded_csv).loc[:, lambda df: ~df.columns.str.contains("^Unnamed")]
-    df_csv.columns = [c.strip().lower().replace(" ", "_") for c in df_csv.columns]
-    with st.sidebar.expander("Vista previa y columnas"):
-        st.sidebar.write(df_csv.head())
-        st.sidebar.write("Columnas:", ", ".join(df_csv.columns))
+    script_chain   = LLMChain(llm=llm,
+                              prompt=ChatPromptTemplate.from_messages([script_sys, human]).partial(**profile),
+                              verbose=False)
+    calendar_chain = LLMChain(llm=llm,
+                              prompt=ChatPromptTemplate.from_messages([calendar_sys, human]).partial(**profile),
+                              verbose=False)
+    ideas_chain    = LLMChain(llm=llm,
+                              prompt=ChatPromptTemplate.from_messages([ideas_sys, human]).partial(**profile),
+                              verbose=False)
 
-    if "csv_agent" not in st.session_state:
-        tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-        conn = sqlite3.connect(tmp_db.name)
-        df_csv.to_sql("posts", conn, index=False, if_exists="replace")
-        conn.close()
-        engine = create_engine(f"sqlite:///{tmp_db.name}")
-        sql_db = SQLDatabase(engine, sample_rows_in_table_info=5)
-        st.session_state.csv_agent = create_sql_agent(
-            llm=ChatOpenAI(temperature=0, streaming=False, api_key=st.secrets["OPENAI_API_KEY"]),
-            db=sql_db, top_k=5, verbose=False, agent_type="openai-tools",
-            handle_parsing_errors=True, handle_sql_errors=True
-        )
+    # 3.5) Sidebar: perfil
+    with st.sidebar.expander("Perfil", expanded=False):
+        labels = {
+            "nombreNegocio":      "Nombre de Negocio",
+            "tipoProducto":       "Tipo de Producto",
+            "productoEstrella":   "Producto Estrella",
+            "personalidad":       "Personalidad",
+            "identidadVisual":    "Identidad Visual",
+            "tipoContenidoMarca": "Tipo de Contenido",
+            "publicoObjetivo":    "Público Objetivo",
+            "redMasVentas":       "Canal Principal",
+            "metodoVenta":        "Método de Venta",
+        }
+        for key, val in profile.items():
+            st.write(f"**{labels.get(key, key)}:** {val}")
 
-    query = st.sidebar.text_input("Pregunta sobre tu CSV:")
-    if st.sidebar.button("▶️") and query:
-        st.session_state.messages.append({"role":"user","content":query})
-        st.markdown(f"""
-            <div style="
-              text-align: right; background-color: #c29a7c; color:#321a2a;
-              border-radius:10px; padding:8px; max-width:80%;
-            ">{query}</div>
-        """, unsafe_allow_html=True)
-        with st.chat_message("assistant"):
-            cb = StreamlitCallbackHandler(st.container())
-            res = st.session_state.csv_agent.invoke({"input": query}, {"callbacks":[cb]})
-            ans = res["output"]
-        st.session_state.messages.append({"role":"assistant","content":ans})
-        st.markdown(f"""
-            <div style="
-              text-align: left; background-color: #947158; color:#FFFFFF;
-              border-radius:10px; padding:8px; max-width:80%;
-            ">{ans}</div>
-        """, unsafe_allow_html=True)
+    # 3.6) Sidebar: generación rápida
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Generar Contenido")
+    if st.sidebar.button("📝 Guion"):
+        st.session_state.mode = "guion"
+    if st.sidebar.button("📅 Calendario"):
+        st.session_state.mode = "calendario"
+    if st.sidebar.button("💡 Ideas"):
+        st.session_state.mode = "ideas"
 
-# --- 11) Mode selector + scroll ---
-col1, col2 = st.columns([5,1])
-with col1:
-    modo = st.radio("", ["Chat libre","Generar Guion","Generar Calendario"], horizontal=True)
-with col2:
-    if st.button("🔽"):
-        st.markdown(
-            '<div id="end"></div>'
-            '<script>document.getElementById("end").scrollIntoView({behavior:"smooth"});</script>',
-            unsafe_allow_html=True
-        )
+    # 3.7) Sidebar: carga de documentos opcionales
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Documentos (opcional)")
+    pdf_file    = st.sidebar.file_uploader("📄 Subir PDF", type="pdf")
+    include_pdf = st.sidebar.checkbox("Incluir PDF en contexto")
+    csv_file    = st.sidebar.file_uploader("📑 Subir CSV", type="csv")
+    include_csv = st.sidebar.checkbox("Incluir CSV en contexto")
 
-# --- 12) Configure LLM & prompt with full profile context ---
-openai_api_key = st.secrets["OPENAI_API_KEY"]
-llm = ChatOpenAI(temperature=0, streaming=True, api_key=openai_api_key)
+    # 3.8) Inicializar vectorstore para RAG
+    vectorstore = initialize_vectorstore(embedding_model=embedder)
 
-system_template = """
-Eres un asistente de marketing digital para la empresa {nombreNegocio}.
-Esta empresa ofrece {tipoProducto} y su producto estrella es {productoEstrella}.
-La personalidad de la marca es {personalidad} y su identidad visual es {identidadVisual}.
-Produce {tipoContenidoMarca} en {redMasVentas}, en formato {formatoContenido}, con frecuencia {frecuenciaPublicacion}.
-Público objetivo: {publicoObjetivo}, método de venta: {metodoVenta}, objetivo concreto: {objetivoConcreto}.
-Siempre responde basándote en este contexto.
-""".strip()
+    # 3.9) Mostrar historial existente sin duplicar
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    for msg in st.session_state.messages:
+        st.chat_message(msg["role"]).write(msg["content"])
 
-system_msg = SystemMessagePromptTemplate.from_template(system_template)
-human_msg = HumanMessagePromptTemplate.from_template("{input}")
+    # 3.10) Entrada de usuario y lógica de respuesta
+    prompt_label = "🔊 Escribe tu pregunta"
+    if st.session_state.get("mode"):
+        prompt_label += f" para generar {st.session_state.mode}"
+    user_input = st.chat_input(f"{prompt_label}:")
 
-chat_prompt = ChatPromptTemplate.from_messages([
-    system_msg,
-    MessagesPlaceholder(variable_name="history"),
-    human_msg
-]).partial(**profile)
+    if user_input:
+        display_msg(user_input, author="user")
+        handler = StreamHandler(st.empty())
 
-if "conversation_chain" not in st.session_state:
-    st.session_state.conversation_chain = ConversationChain(
-        llm=llm, memory=st.session_state.memory, prompt=chat_prompt
-    )
+        # 3.10.1) Generación rápida vía prompt templates
+        mode = st.session_state.get("mode")
+        if mode:
+            if mode == "guion":
+                resp = script_chain.run(input=user_input)
+            elif mode == "calendario":
+                resp = calendar_chain.run(input=user_input)
+            else:
+                resp = ideas_chain.run(input=user_input)
+            display_msg(resp, author="assistant")
+            del st.session_state.mode
 
-# --- 13) Main input form ---
-with st.form("input_form", clear_on_submit=True):
-    c1, c2 = st.columns([0.9,0.1])
-    user_input = c1.text_input("", placeholder="Escribe aquí…", label_visibility="collapsed")
-    send = c2.form_submit_button("➤")
-    if send and user_input:
-        st.session_state.messages.append({"role":"user","content":user_input})
-        st.markdown(f"""
-            <div style="
-              text-align: right; background-color: #c29a7c; color:#321a2a;
-              border-radius:10px; padding:8px; max-width:80%;
-            ">{user_input}</div>
-        """, unsafe_allow_html=True)
-
-        if modo == "Chat libre":
-            resp = st.session_state.conversation_chain.predict(input=user_input)
-            if document_chain:
-                resp += "\n\n📄 " + document_chain.run(user_input)
-        elif modo == "Generar Guion":
-            prompt = "Genera un guion estructurado que incluya:\n1. Guía visual\n2. Duración\n3. Narración\n4. Hashtags\n5. CTA\n\n" + user_input
-            resp = st.session_state.conversation_chain.predict(input=prompt)
+        # 3.10.2) Flujo normal: RAG + PDF + CSV
         else:
-            prompt = "Crea un calendario de contenido, incluye la hora de publicacion, tipo de contenido, plataforma:\n\n" + user_input
-            resp = st.session_state.conversation_chain.predict(input=prompt)
+            docs = vectorstore.similarity_search(user_input, k=4)
+            rag_ctx = "\n\n".join(d.page_content for d in docs)
 
-        st.session_state.messages.append({"role":"assistant","content":resp})
-        st.markdown(f"""
-            <div style="
-              text-align: left; background-color: #947158; color:#FFFFFF;
-              border-radius:10px; padding:8px; max-width:80%;
-            ">{resp}</div>
-        """, unsafe_allow_html=True)
+            pdf_ctx = ""
+            if include_pdf and pdf_file:
+                reader = PyPDF2.PdfReader(pdf_file)
+                pdf_ctx = "PDF:\n" + "\n".join(p.extract_text() or "" for p in reader.pages)
 
-        st.markdown(
-            '<script>window.scrollTo(0,document.body.scrollHeight);</script>',
-            unsafe_allow_html=True
-        )
+            csv_ctx = ""
+            if include_csv and csv_file:
+                df = pd.read_csv(csv_file)
+                cols   = ", ".join(df.columns)
+                sample = df.head(5).to_csv(index=False)
+                csv_ctx = f"CSV columnas: {cols}\nEjemplo filas:\n{sample}"
 
-# --- 14) Final anchor ---
-st.markdown('<div id="end"></div>', unsafe_allow_html=True)
+            all_ctx = "\n\n".join(c for c in (pdf_ctx, csv_ctx, rag_ctx) if c)
+            system_msg = {
+                "role": "system",
+                "content": (
+                    "Eres un asistente de marketing digital para PYMEs.\n"
+                    f"Perfil completo:\n{json.dumps(profile, ensure_ascii=False, indent=2)}"
+                )
+            }
+            user_msg = {
+                "role": "user",
+                "content": f"Contexto:\n{all_ctx}\n\nPregunta: {user_input}"
+            }
+
+            full_resp = ""
+            stream = client.chat.completions.create(
+                model=llm.model_name,
+                messages=[system_msg, user_msg],
+                stream=True
+            )
+            for chunk in stream:
+                tok = chunk.choices[0].delta.content or ""
+                if tok:
+                    handler.on_llm_new_token(tok)
+                    full_resp += tok
+
+            st.session_state.messages.append({"role":"assistant","content":full_resp})
+
+
+if __name__ == "__main__":
+    main()

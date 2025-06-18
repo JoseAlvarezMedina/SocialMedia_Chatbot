@@ -1,0 +1,158 @@
+/*!
+ * assets/style.css
+ * Tema “Dark sobrio” con burbujas azules y títulos en verde neón
+ * --------------------------------------------------------------
+ * - Fondo general
+ * - Sidebar
+ * - Ocultar elementos por defecto
+ * - Burbujas de chat (assistant / user)
+ * - Área de entrada y chat input
+ * - Botones (global y sidebar)
+ * - Tipografía y enlaces
+ */
+
+/* ───────────────────────────────────────────────────────────────────────────────
+   1. Fondo general
+   ─────────────────────────────────────────────────────────────────────────────── */
+[data-testid="stAppViewContainer"] {
+  background-color: #0B0C10 !important;  /* Carbón puro */
+}
+
+/* ───────────────────────────────────────────────────────────────────────────────
+   2. Sidebar
+   ─────────────────────────────────────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+  background-color: #161829 !important;  /* Azul muy oscuro */
+  color:            #B0BEC5 !important;  /* Gris suave */
+  font-size:        0.85rem   !important;
+  padding:          1rem     !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────────
+   3. Ocultar menú y pie de página
+   ─────────────────────────────────────────────────────────────────────────────── */
+#MainMenu,
+footer {
+  visibility: hidden !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────────
+   4. Burbujas de chat
+   ─────────────────────────────────────────────────────────────────────────────── */
+/* 4.1. Assistant */
+div[data-testid="stChatMessage"][role="assistant"] > div {
+  background-color: #1E88E5 !important;  /* Azul medio-claro */
+  color:            #FFFFFF !important;  /* Blanco puro */
+  border-radius:    8px      !important;
+  padding:          0.75em   !important;
+  margin-bottom:    0.5em    !important;
+  max-width:        80%      !important;
+}
+
+/* 4.2. User */
+div[data-testid="stChatMessage"][role="user"] > div {
+  background-color: #1565C0 !important;  /* Azul oscuro */
+  color:            #CFD8DC !important;  /* Gris muy claro */
+  border-radius:    8px      !important;
+  padding:          0.75em   !important;
+  margin-bottom:    0.5em    !important;
+  max-width:        80%      !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────────
+   5. Área de entrada de chat
+   ─────────────────────────────────────────────────────────────────────────────── */
+[data-testid="stChatInput"] textarea {
+  background-color: #1E1E24 !important;  /* Gris muy oscuro */
+  color:            #ECEFF1 !important;  /* Blanco humo */
+  border:           1px solid #333333 !important;
+  border-radius:    8px      !important;
+  padding:          0.5em    !important;
+  font-size:        1rem     !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────────
+   6. Botones de Streamlit (global)
+   ─────────────────────────────────────────────────────────────────────────────── */
+/* 6.1. Botones estándar */
+button,
+button[data-baseweb="button"],
+.stButton > button {
+  background-color: #546E7A !important;  /* Acero grisáceo */
+  color:            #ECEFF1 !important;  /* Blanco humo */
+  border:           none      !important;
+  border-radius:    8px       !important;
+  padding:          0.6em 1em !important;
+  font-weight:      600       !important;
+  cursor:           pointer   !important;
+  width:            100%      !important;
+}
+
+/* 6.2. Hover */
+button:hover,
+button[data-baseweb="button"]:hover,
+.stButton > button:hover {
+  background-color: #425A64 !important;  /* Gris más oscuro */
+}
+
+/* 6.3. Focus */
+button:focus,
+button[data-baseweb="button"]:focus,
+.stButton > button:focus {
+  outline:     none                                        !important;
+  box-shadow:  0 0 0 2px rgba(84, 110, 122, 0.5) !important;
+}
+
+/* 6.4. Disabled */
+button:disabled,
+button[data-baseweb="button"][disabled],
+.stButton > button[disabled] {
+  background-color: #333333 !important;  /* Gris muy oscuro */
+  color:            #777777 !important;  /* Gris claro */
+}
+
+/* ───────────────────────────────────────────────────────────────────────────────
+   7. Botones del sidebar (refuerzo)
+   ─────────────────────────────────────────────────────────────────────────────── */
+[data-testid="stSidebar"] .stButton > button {
+  /* Re-define styling para garantizar coherencia */
+  background-color: #546E7A !important;
+  color:            #ECEFF1 !important;
+  border:           none      !important;
+  border-radius:    8px       !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+  background-color: #425A64 !important;
+}
+[data-testid="stSidebar"] .stButton > button:focus {
+  outline:    none !important;
+  box-shadow: 0 0 0 2px rgba(84,110,122,0.5) !important;
+}
+[data-testid="stSidebar"] .stButton > button[disabled] {
+  background-color: #333333 !important;
+  color:            #777777 !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────────
+   8. Títulos e intertítulos
+   ─────────────────────────────────────────────────────────────────────────────── */
+h1, h2, h3 {
+  color:          #39FF14 !important;  /* Verde neón */
+  font-family:    'Segoe UI', sans-serif !important;
+  margin-bottom:  0.5em     !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────────
+   9. Texto general y enlaces
+   ─────────────────────────────────────────────────────────────────────────────── */
+.stText,
+.stMarkdown {
+  color: #ECEFF1 !important;  /* Blanco humo */
+}
+
+a {
+  color:            #90A4AE !important;  /* Gris azulado */
+}
+a:hover {
+  text-decoration: underline !important;
+}
