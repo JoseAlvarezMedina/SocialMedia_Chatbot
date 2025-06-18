@@ -1,0 +1,27 @@
+# Entorno virtual
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Secrets de Streamlit
+.streamlit/secrets.toml
+
+# Archivos de configuración locales
+.devcontainer/
+devcontainer.json
+
+# Archivos de FAISS/Vectorstore si no quieres subirlos
+book_vectorstore/vectorstores/
+
+# Logs, outputs y bases de datos locales
+*.log
+*.db
+*.sqlite
+*.csv
+
+# Mac, IDEs, SO
+.DS_Store
+*.swp
+.idea/
+.vscode/
