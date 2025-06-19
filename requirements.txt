@@ -12,3 +12,10 @@ validators==0.34.0
 fastembed==0.4.2
 pypdf==5.1.0
 duckduckgo_search==7.0.1
+streamlit>=1.27.0
+openai>=0.27.0
+langchain-openai>=0.0.1
+faiss-cpu>=1.7.4
+python-dotenv
+PyPDF2>=2.0.0
+pandas
